@@ -15,7 +15,7 @@ export abstract class User extends BaseEntity {
   @Column({ unique: true })
   email: string;
 
-  @Column()
+  @Column() 
   password: string;
 
   @Column()

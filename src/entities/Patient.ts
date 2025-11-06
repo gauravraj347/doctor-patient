@@ -1,4 +1,4 @@
-import { ChildEntity, Column, OneToMany } from 'typeorm';
+import { ChildEntity, Column } from 'typeorm';
 import { UserRole } from './common';
 import { User } from './User';
 
@@ -10,21 +10,4 @@ export class Patient extends User {
   @Column({ nullable: true })
   address: string;
 
-  @Column({ nullable: true })
-  emergencyContact: string;
-
-  @Column({ nullable: true })
-  emergencyContactPhone: string;
-
-  @Column({ nullable: true })
-  medicalHistory: string;
-
-  @Column({ nullable: true })
-  allergies: string;
-
-  @Column({ nullable: true })
-  currentMedications: string;
-
-  @OneToMany('Appointment', 'patient')
-  appointments: any[];
 }

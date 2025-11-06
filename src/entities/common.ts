@@ -17,24 +17,9 @@ export abstract class BaseEntity {
 
 export enum UserRole {
   PATIENT = 'patient',
-  DOCTOR = 'doctor',
-}
-
-export enum AppointmentStatus {
-  PENDING = 'pending',
-  CONFIRMED = 'confirmed',
-  COMPLETED = 'completed',
-  CANCELLED = 'cancelled',
-}
-
-export enum DoctorStatus {
-  PENDING = 'pending',
-  VERIFIED = 'verified',
-  REJECTED = 'rejected',
 }
 
 export enum TokenType {
   EMAIL_VERIFICATION = 'email_verification',
   PASSWORD_RESET = 'password_reset',
-  DOCTOR_VERIFICATION = 'doctor_verification',
 }
