@@ -10,10 +10,13 @@ import { JwtService } from '@nestjs/jwt';
 import { User } from '../entities/User';
 import { Patient } from '../entities/Patient';
 import { RefreshToken } from '../entities/RefreshToken';
+import { VerificationToken } from '../entities/VerificationToken';
 import { SignupDto } from './dto/signup.dto';
 import { SigninDto } from './dto/signin.dto';
+import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { UserRole } from '../entities/common';
 import { Doctor } from '../entities/Doctor';
+import { ResendOtpDto } from './dto/resend-otp.dto';
 
 @Injectable()
 export class AuthService {
@@ -26,6 +29,8 @@ export class AuthService {
     private doctorRepository: Repository<Doctor>,
     @InjectRepository(RefreshToken)
     private refreshTokenRepository: Repository<RefreshToken>,
+    @InjectRepository(VerificationToken)
+    private verificationTokenRepository: Repository<VerificationToken>,
     private jwtService: JwtService,
   ) { }
 
@@ -47,6 +52,7 @@ export class AuthService {
         email,
         ...userData,
         role,
+        isEmailVerified: false,
       });
       await this.patientRepository.save(user);
     } else if (role === UserRole.DOCTOR) {
@@ -54,24 +60,26 @@ export class AuthService {
         email,
         ...userData,
         role,
+        isEmailVerified: false,
       });
       await this.doctorRepository.save(user);
     } else {
       throw new BadRequestException('Invalid role specified');
     }
 
-    const tokens = await this.generateTokens(user.id, role);
-    await this.storeRefreshToken(tokens.refreshToken, user);
+    // Generate and send OTP
+    await this.generateAndStoreOtp(user);
 
     return {
+      message: 'Signup successful. Please verify your email with the OTP sent.',
       user: {
         id: user.id,
         email: user.email,
         firstName: user.firstName,
         lastName: user.lastName,
         role: user.role,
+        isEmailVerified: false,
       },
-      ...tokens,
     };
   }
 
@@ -86,6 +94,10 @@ export class AuthService {
 
     if (!user.isActive) {
       throw new UnauthorizedException('Account is deactivated');
+    }
+
+    if (!user.isEmailVerified) {
+      throw new UnauthorizedException('Please verify your email before signing in');
     }
 
     const tokens = await this.generateTokens(user.id, user.role);
@@ -135,6 +147,107 @@ export class AuthService {
     });
 
     await this.refreshTokenRepository.save(refreshToken);
+  }
+
+  async verifyOtp(verifyOtpDto: VerifyOtpDto) {
+    const { email, otp } = verifyOtpDto;
+
+    const user = await this.userRepository.findOne({ where: { email } });
+
+    if (!user) {
+      throw new BadRequestException('User not found');
+    }
+
+    if (user.isEmailVerified) {
+      throw new BadRequestException('Email already verified');
+    }
+
+    // Find valid OTP
+    const verificationToken = await this.verificationTokenRepository.findOne({
+      where: {
+        userId: user.id,
+        otp,
+        isUsed: false,
+      },
+      order: { createdAt: 'DESC' },
+    });
+
+    if (!verificationToken) {
+      throw new BadRequestException('Invalid OTP');
+    }
+
+    if (new Date() > verificationToken.expiresAt) {
+      throw new BadRequestException('OTP has expired');
+    }
+
+    // Mark OTP as used
+    verificationToken.isUsed = true;
+    await this.verificationTokenRepository.save(verificationToken);
+
+    // Verify user
+    user.isEmailVerified = true;
+    await this.userRepository.save(user);
+
+    // Generate tokens
+    const tokens = await this.generateTokens(user.id, user.role);
+    await this.storeRefreshToken(tokens.refreshToken, user);
+
+    return {
+      message: 'Email verified successfully',
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        role: user.role,
+        isEmailVerified: true,
+      },
+      ...tokens,
+    };
+  }
+
+  async resendOtp(resendOtpDto: ResendOtpDto) {
+    const { email } = resendOtpDto;
+
+    const user = await this.userRepository.findOne({ where: { email } });
+
+    if (!user) {
+      throw new BadRequestException('User not found');
+    }
+
+    if (user.isEmailVerified) {
+      throw new BadRequestException('Email already verified');
+    }
+
+    // Generate and send new OTP
+    await this.generateAndStoreOtp(user);
+
+    return {
+      message: 'OTP resent successfully',
+    };
+  }
+
+  private async generateAndStoreOtp(user: User) {
+    // Generate 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Set expiry to 10 minutes from now
+    const expiresAt = new Date();
+    expiresAt.setMinutes(expiresAt.getMinutes() + 10);
+
+    // Store OTP
+    const verificationToken = this.verificationTokenRepository.create({
+      otp,
+      expiresAt,
+      user,
+      userId: user.id,
+    });
+
+    await this.verificationTokenRepository.save(verificationToken);
+
+    console.log(`OTP for ${user.email}: ${otp}`);
+
+    return otp;
   }
 
   async googleLogin(googleUser: any) {

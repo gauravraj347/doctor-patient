@@ -42,8 +42,13 @@ export abstract class User extends BaseEntity {
   @BeforeInsert()
   @BeforeUpdate()
   async hashPassword() {
+    // Only hash if password exists, has content, and is not already hashed
     if (this.password && this.password.length > 0) {
-      this.password = await bcrypt.hash(this.password, 12);
+      // Check if password is already hashed (bcrypt hashes start with $2a$ or $2b$)
+      const isHashed = this.password.startsWith('$2a$') || this.password.startsWith('$2b$');
+      if (!isHashed) {
+        this.password = await bcrypt.hash(this.password, 12);
+      }
     }
   }
 
