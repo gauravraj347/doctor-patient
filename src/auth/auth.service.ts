@@ -11,12 +11,14 @@ import { User } from '../entities/User';
 import { Patient } from '../entities/Patient';
 import { RefreshToken } from '../entities/RefreshToken';
 import { VerificationToken } from '../entities/VerificationToken';
+import { PendingOAuthUser } from '../entities/PendingOAuthUser';
 import { SignupDto } from './dto/signup.dto';
 import { SigninDto } from './dto/signin.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
+import { ResendOtpDto } from './dto/resend-otp.dto';
+import { SelectRoleDto } from './dto/select-role.dto';
 import { UserRole } from '../entities/common';
 import { Doctor } from '../entities/Doctor';
-import { ResendOtpDto } from './dto/resend-otp.dto';
 
 @Injectable()
 export class AuthService {
@@ -31,6 +33,8 @@ export class AuthService {
     private refreshTokenRepository: Repository<RefreshToken>,
     @InjectRepository(VerificationToken)
     private verificationTokenRepository: Repository<VerificationToken>,
+    @InjectRepository(PendingOAuthUser)
+    private pendingOAuthUserRepository: Repository<PendingOAuthUser>,
     private jwtService: JwtService,
   ) { }
 
@@ -68,6 +72,7 @@ export class AuthService {
     }
 
     // Generate and send OTP
+     console.log(`[SIGNUP] Generating OTP for new user: ${user.email}`);
     await this.generateAndStoreOtp(user);
 
     return {
@@ -220,6 +225,7 @@ export class AuthService {
     }
 
     // Generate and send new OTP
+    console.log(`[RESEND OTP] Generating new OTP for user: ${user.email}`);
     await this.generateAndStoreOtp(user);
 
     return {
@@ -245,44 +251,159 @@ export class AuthService {
 
     await this.verificationTokenRepository.save(verificationToken);
 
-    console.log(`OTP for ${user.email}: ${otp}`);
+    console.log('='.repeat(60));
+    console.log(`[OTP GENERATED] ${new Date().toISOString()}`);
+    console.log(`Email: ${user.email}`);
+    console.log(`OTP Code: ${otp}`);
+    console.log(`Expires At: ${expiresAt.toISOString()}`);
+    console.log('='.repeat(60));
+
 
     return otp;
   }
 
   async googleLogin(googleUser: any) {
-    const { email, firstName, lastName } = googleUser;
+    const { email, firstName, lastName, picture } = googleUser;
 
     // Check if user exists
     let user = await this.userRepository.findOne({ where: { email } });
 
-    if (!user) {
-      // Create new user as patient by default
-      user = this.patientRepository.create({
+    if (user) {
+      // User exists, proceed with login
+      if (!user.isActive) {
+        throw new UnauthorizedException('Account is deactivated');
+      }
+
+      const tokens = await this.generateTokens(user.id, user.role);
+      await this.storeRefreshToken(tokens.refreshToken, user);
+
+      return {
+        user: {
+          id: user.id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          role: user.role,
+        },
+        ...tokens,
+      };
+    }
+
+    // User doesn't exist - create pending OAuth user and require role selection
+    // Check if pending OAuth user already exists
+    let pendingOAuthUser = await this.pendingOAuthUserRepository.findOne({
+      where: { email },
+    });
+
+    if (!pendingOAuthUser) {
+      // Create new pending OAuth user
+      const expiresAt = new Date();
+      expiresAt.setHours(expiresAt.getHours() + 1); // 1 hour to complete registration
+
+      pendingOAuthUser = this.pendingOAuthUserRepository.create({
         email,
         firstName,
         lastName,
-        password: '', // No password for OAuth users
-        role: UserRole.PATIENT,
-        isEmailVerified: true, // Google accounts are pre-verified
+        picture,
+        expiresAt,
       });
-      await this.patientRepository.save(user);
+
+      await this.pendingOAuthUserRepository.save(pendingOAuthUser);
     }
 
-    if (!user.isActive) {
-      throw new UnauthorizedException('Account is deactivated');
+    // Return response indicating role selection is needed
+    return {
+      requiresRoleSelection: true,
+      email,
+      firstName,
+      lastName,
+      message: 'Please select your role to complete registration',
+    };
+  }
+
+  async selectRole(selectRoleDto: SelectRoleDto) {
+    const { email, role, ...additionalData } = selectRoleDto;
+
+    // Find pending OAuth user
+    const pendingOAuthUser = await this.pendingOAuthUserRepository.findOne({
+      where: { email },
+    });
+
+    if (!pendingOAuthUser) {
+      throw new BadRequestException(
+        'No pending OAuth registration found. Please sign in with Google again.',
+      );
     }
 
+    // Check if expired
+    if (new Date() > pendingOAuthUser.expiresAt) {
+      await this.pendingOAuthUserRepository.remove(pendingOAuthUser);
+      throw new BadRequestException(
+        'Registration session expired. Please sign in with Google again.',
+      );
+    }
+
+    // Check if user already exists
+    const existingUser = await this.userRepository.findOne({
+      where: { email },
+    });
+
+    if (existingUser) {
+      throw new ConflictException('User already exists');
+    }
+
+    // Create user based on selected role
+    let user: Patient | Doctor;
+
+    if (role === UserRole.PATIENT) {
+      const patient = new Patient();
+      patient.email = pendingOAuthUser.email;
+      patient.password = ''; // No password for OAuth users
+      patient.firstName = pendingOAuthUser.firstName;
+      patient.lastName = pendingOAuthUser.lastName;
+      if (additionalData.phone) patient.phone = additionalData.phone;
+      patient.role = role;
+      if (additionalData.dateOfBirth)
+        patient.dateOfBirth = new Date(additionalData.dateOfBirth);
+      if (additionalData.address) patient.address = additionalData.address;
+      patient.isEmailVerified = true; // Google accounts are pre-verified
+      patient.isActive = true;
+      user = await this.patientRepository.save(patient);
+    } else if (role === UserRole.DOCTOR) {
+      const doctor = new Doctor();
+      doctor.email = pendingOAuthUser.email;
+      doctor.password = ''; // No password for OAuth users
+      doctor.firstName = pendingOAuthUser.firstName;
+      doctor.lastName = pendingOAuthUser.lastName;
+      if (additionalData.phone) doctor.phone = additionalData.phone;
+      doctor.role = role;
+      if (additionalData.specialization)
+        doctor.specialization = additionalData.specialization;
+      if (additionalData.licenseNumber)
+        doctor.licenseNumber = additionalData.licenseNumber;
+      doctor.isEmailVerified = true; // Google accounts are pre-verified
+      doctor.isActive = true;
+      user = await this.doctorRepository.save(doctor);
+    } else {
+      throw new BadRequestException('Invalid role');
+    }
+
+    // Delete pending OAuth user
+    await this.pendingOAuthUserRepository.remove(pendingOAuthUser);
+
+    // Generate tokens
     const tokens = await this.generateTokens(user.id, user.role);
     await this.storeRefreshToken(tokens.refreshToken, user);
 
     return {
+      message: 'Registration completed successfully',
       user: {
         id: user.id,
         email: user.email,
         firstName: user.firstName,
         lastName: user.lastName,
         role: user.role,
+        isEmailVerified: true,
       },
       ...tokens,
     };

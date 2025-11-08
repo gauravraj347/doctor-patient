@@ -5,6 +5,7 @@ import { Patient } from './entities/Patient';
 import { RefreshToken } from './entities/RefreshToken';
 import { Doctor } from './entities/Doctor';
 import { VerificationToken } from './entities/VerificationToken';
+import { PendingOAuthUser } from './entities/PendingOAuthUser';
 config();
 export const dataSourceOptions: DataSourceOptions = {
     type: 'postgres',
@@ -13,7 +14,7 @@ export const dataSourceOptions: DataSourceOptions = {
     username: process.env.DB_USERNAME,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
-    entities: [User, Patient, Doctor, RefreshToken, VerificationToken],
+    entities: [User, Patient, Doctor, RefreshToken, VerificationToken, PendingOAuthUser],
     migrations:[],
     logging:false,
     synchronize:true

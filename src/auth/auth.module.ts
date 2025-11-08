@@ -11,12 +11,13 @@ import { Patient } from '../entities/Patient';
 import { Doctor } from '../entities/Doctor'; 
 import { RefreshToken } from '../entities/RefreshToken';
 import { VerificationToken } from '../entities/VerificationToken';
+import { PendingOAuthUser } from '../entities/PendingOAuthUser';
 import { GoogleStrategy } from './strategies/google.strategy';
 import { GoogleAuthGuard } from './guards/google-auth.guard';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, Patient, Doctor, RefreshToken, VerificationToken]),
+    TypeOrmModule.forFeature([User, Patient, Doctor, RefreshToken, VerificationToken, PendingOAuthUser]),
     PassportModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
