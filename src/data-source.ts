@@ -6,6 +6,9 @@ import { RefreshToken } from './entities/RefreshToken';
 import { Doctor } from './entities/Doctor';
 import { VerificationToken } from './entities/VerificationToken';
 import { PendingOAuthUser } from './entities/PendingOAuthUser';
+import { DoctorSchedule } from './entities/DoctorSchedule';
+import { TimeSlot } from './entities/TimeSlot';
+import { Appointment } from './entities/Appointment';
 config();
 export const dataSourceOptions: DataSourceOptions = {
     type: 'postgres',
@@ -14,7 +17,7 @@ export const dataSourceOptions: DataSourceOptions = {
     username: process.env.DB_USERNAME,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
-    entities: [User, Patient, Doctor, RefreshToken, VerificationToken, PendingOAuthUser],
+    entities: [User, Patient, Doctor, RefreshToken, VerificationToken, PendingOAuthUser, DoctorSchedule, TimeSlot, Appointment],
     migrations:[],
     logging:false,
     synchronize:true

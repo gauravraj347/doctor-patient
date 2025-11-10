@@ -1,4 +1,4 @@
-import { ChildEntity, Column } from 'typeorm';
+import { ChildEntity, Column, OneToOne, OneToMany } from 'typeorm';
 import { UserRole } from './common';
 import { User } from './User';
 
@@ -10,4 +10,9 @@ export class Doctor extends User {
   @Column({ nullable: true })
   licenseNumber: string;
 
+  @OneToOne('DoctorSchedule', 'doctor')
+  schedule: any;
+
+  @OneToMany('TimeSlot', 'doctor')
+  timeSlots: any[];
 }
