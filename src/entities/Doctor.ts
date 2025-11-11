@@ -10,6 +10,9 @@ export class Doctor extends User {
   @Column({ nullable: true })
   licenseNumber: string;
 
+  @Column({ nullable: true })
+  address: string;
+
   @OneToOne('DoctorSchedule', 'doctor')
   schedule: any;
 
