@@ -2,6 +2,8 @@ import { Controller, Get, Query, Param, NotFoundException } from '@nestjs/common
 import { DoctorsService } from './doctors.service';
 import { DoctorQueryDto } from './dto/doctor-query.dto';
 import { DoctorResponseDto } from './dto/doctor-response.dto';
+import { AvailableSlotsQueryDto } from './dto/available-slots-query.dto';
+import { AvailableSlotsResponseDto } from './dto/available-slots-response.dto';
 
 @Controller('doctors')
 export class DoctorsController {
@@ -21,5 +23,19 @@ export class DoctorsController {
     }
 
     return doctor;
+  }
+
+  @Get(':id/available-slots')
+  async getAvailableSlots(
+    @Param('id') id: string,
+    @Query() query: AvailableSlotsQueryDto,
+  ): Promise<AvailableSlotsResponseDto> {
+    const slots = await this.doctorsService.getAvailableSlots(id, query.date);
+    
+    if (!slots) {
+      throw new NotFoundException(`Doctor with ID ${id} not found or has no schedule configured`);
+    }
+
+    return slots;
   }
 }
