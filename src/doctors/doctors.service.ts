@@ -349,6 +349,7 @@ export class DoctorsService {
   }
 
   private calculateAverageRating(doctor: Doctor): number {
+    // TODO: Implement actual rating calculation from appointments/reviews
     // For now, return a mock rating between 3.5 and 5.0
     return parseFloat((Math.random() * 1.5 + 3.5).toFixed(1));
   }
