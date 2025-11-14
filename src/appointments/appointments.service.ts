@@ -106,11 +106,14 @@ export class AppointmentsService {
                 throw new BadRequestException('Invalid schedule type');
             }
 
+            // Send booking notification
+            await this.sendBookingNotification(appointment);
+
             return {
                 message: 'Appointment confirmed successfully',
                 appointment: {
                     id: appointment.id,
-                    doctorId: appointment.patientId,
+                    doctorId: dto.doctorId,
                     patientId: appointment.patientId,
                     slotId: appointment.slotId,
                     appointmentDate: appointment.appointmentDate,
@@ -277,6 +280,9 @@ export class AppointmentsService {
             appointment.status = AppointmentStatus.CANCELLED;
             await manager.save(Appointment, appointment);
 
+            // Send cancellation notification
+            await this.sendCancellationNotification(appointment, dto.reason);
+
             return {
                 message: 'Appointment cancelled successfully',
                 appointment: {
@@ -316,6 +322,113 @@ export class AppointmentsService {
         }));
     }
 
+    async getAppointmentById(appointmentId: string, userId: string) {
+        const appointment = await this.appointmentRepository.findOne({
+            where: { id: appointmentId },
+            relations: ['patient', 'timeSlot', 'timeSlot.doctor', 'timeSlot.doctor.schedule'],
+        });
+
+        if (!appointment) {
+            return null;
+        }
+
+        // Verify ownership
+        if (appointment.patientId !== userId) {
+            return null;
+        }
+
+        const doctor = (appointment.timeSlot as any)?.doctor;
+        const schedule = doctor?.schedule;
+
+        return {
+            appointmentId: appointment.id,
+            doctor: doctor
+                ? {
+                    id: doctor.id,
+                    name: `Dr. ${doctor.firstName} ${doctor.lastName}`,
+                    specialization: doctor.specialization || 'General',
+                    phone: doctor.phone || '',
+                    email: doctor.email,
+                }
+                : null,
+            patient: {
+                id: appointment.patient.id,
+                name: `${appointment.patient.firstName} ${appointment.patient.lastName}`,
+                email: appointment.patient.email,
+                phone: appointment.patient.phone || '',
+            },
+            appointmentDate: appointment.appointmentDate,
+            startTime: appointment.timeSlot
+                ? (appointment.timeSlot as any).startTime
+                : schedule?.consultingStartTime || null,
+            endTime: appointment.timeSlot
+                ? (appointment.timeSlot as any).endTime
+                : schedule?.consultingEndTime || null,
+            status: appointment.status,
+            reportingTime: appointment.reportingTime,
+            tokenNumber: appointment.tokenNumber,
+            scheduleType: schedule?.scheduleType || null,
+            createdAt: appointment.createdAt,
+        };
+    }
+
+    async getPatientAppointmentsWithFilters(
+        patientId: string,
+        filters: any,
+    ) {
+        const queryBuilder = this.appointmentRepository
+            .createQueryBuilder('appointment')
+            .leftJoinAndSelect('appointment.timeSlot', 'timeSlot')
+            .leftJoinAndSelect('timeSlot.doctor', 'doctor')
+            .where('appointment.patientId = :patientId', { patientId });
+
+        // Filter by status
+        if (filters.status) {
+            queryBuilder.andWhere('appointment.status = :status', {
+                status: filters.status,
+            });
+        }
+
+        // Filter by date range
+        if (filters.from) {
+            queryBuilder.andWhere('appointment.appointmentDate >= :from', {
+                from: filters.from,
+            });
+        }
+
+        if (filters.to) {
+            queryBuilder.andWhere('appointment.appointmentDate <= :to', {
+                to: filters.to,
+            });
+        }
+
+        const appointments = await queryBuilder
+            .orderBy('appointment.appointmentDate', 'DESC')
+            .addOrderBy('appointment.createdAt', 'DESC')
+            .getMany();
+
+        return appointments.map((apt) => {
+            const doctor = (apt.timeSlot as any)?.doctor;
+            return {
+                appointmentId: apt.id,
+                doctorName: doctor
+                    ? `Dr. ${doctor.firstName} ${doctor.lastName}`
+                    : 'Unknown',
+                doctorSpecialization: doctor?.specialization || 'General',
+                appointmentDate: apt.appointmentDate,
+                reportingTime: apt.reportingTime,
+                tokenNumber: apt.tokenNumber,
+                status: apt.status,
+                slot: apt.timeSlot
+                    ? {
+                        startTime: (apt.timeSlot as any).startTime,
+                        endTime: (apt.timeSlot as any).endTime,
+                    }
+                    : null,
+            };
+        });
+    }
+
     private parseTime(timeString: string): number {
         const parts = timeString.split(':');
         const hours = parseInt(parts[0], 10);
@@ -327,5 +440,43 @@ export class AppointmentsService {
         const hours = Math.floor(minutes / 60);
         const mins = minutes % 60;
         return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:00`;
+    }
+
+    private async sendBookingNotification(appointment: any) {
+        // TODO: Implement actual notification service
+        // For now, just log the notification
+        console.log('='.repeat(60));
+        console.log('[BOOKING NOTIFICATION]');
+        console.log(`Patient: ${appointment.patientId}`);
+        console.log(`Date: ${appointment.appointmentDate}`);
+        console.log(`Time: ${appointment.reportingTime}`);
+        console.log(`Token: ${appointment.tokenNumber}`);
+        console.log('='.repeat(60));
+
+        // In production, this would:
+        // - Send email notification
+        // - Send SMS notification
+        // - Create in-app notification
+        // - Schedule reminder notifications
+    }
+
+    private async sendCancellationNotification(
+        appointment: any,
+        reason?: string,
+    ) {
+        // TODO: Implement actual notification service
+        console.log('='.repeat(60));
+        console.log('[CANCELLATION NOTIFICATION]');
+        console.log(`Appointment ID: ${appointment.id}`);
+        console.log(`Patient: ${appointment.patientId}`);
+        console.log(`Date: ${appointment.appointmentDate}`);
+        console.log(`Reason: ${reason || 'Not specified'}`);
+        console.log('='.repeat(60));
+
+        // In production, this would:
+        // - Send cancellation email
+        // - Send SMS notification
+        // - Update in-app notifications
+        // - Cancel scheduled reminders
     }
 }
