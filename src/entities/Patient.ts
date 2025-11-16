@@ -1,4 +1,4 @@
-import { ChildEntity, Column } from 'typeorm';
+import { ChildEntity, Column, OneToMany } from 'typeorm';
 import { UserRole } from './common';
 import { User } from './User';
 
@@ -10,4 +10,6 @@ export class Patient extends User {
   @Column({ nullable: true })
   address: string;
 
+  @OneToMany('Appointment', 'patient')
+  appointments: any[];
 }
