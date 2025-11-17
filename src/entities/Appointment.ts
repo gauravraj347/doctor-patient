@@ -1,4 +1,4 @@
-import { Entity, Column, ManyToOne, JoinColumn } from 'typeorm';
+import { Entity, Column, ManyToOne, JoinColumn, OneToMany } from 'typeorm';
 import { BaseEntity } from './common';
 import { Patient } from './Patient';
 import { TimeSlot } from './TimeSlot';
@@ -22,7 +22,7 @@ export class Appointment extends BaseEntity {
   @JoinColumn({ name: 'slotId' })
   timeSlot: TimeSlot;
 
-  @Column()
+  @Column({ nullable: true })
   slotId: string;
 
   @Column({ type: 'date' })
@@ -36,4 +36,10 @@ export class Appointment extends BaseEntity {
 
   @Column({ nullable: true })
   tokenNumber: number;
+
+  @Column({ default: false })
+  isRescheduled: boolean;
+
+  @OneToMany('RescheduleHistory', 'appointment')
+  rescheduleHistory: any[];
 }
