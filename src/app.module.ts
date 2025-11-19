@@ -6,6 +6,7 @@ import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
 import { DoctorsModule } from './doctors/doctors.module';
 import { AppointmentsModule } from './appointments/appointments.module';
+import { ElasticSchedulingModule } from './elastic-scheduling/elastic-scheduling.module';
 import { dataSourceOptions } from './data-source';
 
 @Module({
@@ -18,6 +19,7 @@ import { dataSourceOptions } from './data-source';
     AuthModule,
     DoctorsModule,
     AppointmentsModule,
+    ElasticSchedulingModule,
   ],
   controllers: [AppController],
   providers: [AppService],

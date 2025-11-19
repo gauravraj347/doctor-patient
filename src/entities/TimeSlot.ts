@@ -33,6 +33,12 @@ export class TimeSlot extends BaseEntity {
   @Column({ default: true })
   isAvailable: boolean;
 
+  @Column({ default: false })
+  isOverride: boolean;
+
+  @Column({ type: 'date', nullable: true })
+  overrideDate: Date;
+
   @OneToMany('Appointment', 'timeSlot')
   appointments: any[];
 }

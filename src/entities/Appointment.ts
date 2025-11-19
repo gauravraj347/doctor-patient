@@ -1,4 +1,4 @@
-import { Entity, Column, ManyToOne, JoinColumn, OneToMany } from 'typeorm';
+import { Entity, Column, ManyToOne, JoinColumn } from 'typeorm';
 import { BaseEntity } from './common';
 import { Patient } from './Patient';
 import { TimeSlot } from './TimeSlot';
@@ -7,6 +7,8 @@ export enum AppointmentStatus {
   SCHEDULED = 'Scheduled',
   CANCELLED = 'Cancelled',
   COMPLETED = 'Completed',
+  NEEDS_RESCHEDULE = 'NeedsReschedule',
+  RESCHEDULED = 'Rescheduled',
 }
 
 @Entity('appointments')
@@ -22,7 +24,7 @@ export class Appointment extends BaseEntity {
   @JoinColumn({ name: 'slotId' })
   timeSlot: TimeSlot;
 
-  @Column({ nullable: true })
+  @Column()
   slotId: string;
 
   @Column({ type: 'date' })
@@ -37,9 +39,15 @@ export class Appointment extends BaseEntity {
   @Column({ nullable: true })
   tokenNumber: number;
 
-  @Column({ default: false })
-  isRescheduled: boolean;
+  @Column({ type: 'time', nullable: true })
+  originalReportingTime: string;
 
-  @OneToMany('RescheduleHistory', 'appointment')
-  rescheduleHistory: any[];
+  @Column({ nullable: true })
+  originalSlotId: string;
+
+  @Column({ default: false })
+  wasAffectedByElasticScheduling: boolean;
+
+  @Column({ type: 'text', nullable: true })
+  elasticSchedulingNote: string;
 }
