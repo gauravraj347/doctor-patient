@@ -31,12 +31,27 @@ export class ElasticSchedulingController {
     // Validate date format
     this.validateDate(date);
 
-    return await this.elasticSchedulingService.expandStartTimeWave(
-      doctorId,
-      date,
-      dto.newStartTime,
-      dto.reason,
-    );
+    // This will be handled in the service layer
+    try {
+      // Try wave first
+      return await this.elasticSchedulingService.expandStartTimeWave(
+        doctorId,
+        date,
+        dto.newStartTime,
+        dto.reason,
+      );
+    } catch (error: any) {
+      if (error.message === 'This operation is only for wave scheduling') {
+        // Try stream
+        return await this.elasticSchedulingService.expandStartTimeStream(
+          doctorId,
+          date,
+          dto.newStartTime,
+          dto.reason,
+        );
+      }
+      throw error;
+    }
   }
 
   @Post('expand-end')
@@ -53,14 +68,26 @@ export class ElasticSchedulingController {
     // Validate date format
     this.validateDate(date);
 
-    // Phase 1: Only Wave scheduling is supported
-    return await this.elasticSchedulingService.expandEndTimeWave(
-      doctorId,
-      date,
-      dto.newEndTime,
-      dto.reason,
-    );
-
+    try {
+      // Try wave first
+      return await this.elasticSchedulingService.expandEndTimeWave(
+        doctorId,
+        date,
+        dto.newEndTime,
+        dto.reason,
+      );
+    } catch (error: any) {
+      if (error.message === 'This operation is only for wave scheduling') {
+        // Try stream
+        return await this.elasticSchedulingService.expandEndTimeStream(
+          doctorId,
+          date,
+          dto.newEndTime,
+          dto.reason,
+        );
+      }
+      throw error;
+    }
   }
 
   private validateDate(dateString: string): void {

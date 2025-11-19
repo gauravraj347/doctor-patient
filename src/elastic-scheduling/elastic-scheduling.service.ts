@@ -195,6 +195,122 @@ export class ElasticSchedulingService {
     });
   }
 
+  // ==================== EXPAND START TIME (STREAM) ====================
+  async expandStartTimeStream(
+    doctorId: string,
+    date: string,
+    newStartTime: string,
+    reason?: string,
+  ): Promise<ExpandSessionResultDto> {
+    return await this.dataSource.transaction(async (manager) => {
+      // 1. Get doctor schedule
+      const schedule = await this.getDoctorSchedule(manager, doctorId);
+
+      if (schedule.scheduleType !== ScheduleType.STREAM) {
+        throw new BadRequestException(
+          'This operation is only for stream scheduling',
+        );
+      }
+
+      // 2. Calculate new capacity
+      const originalMinutes =
+        this.parseTime(schedule.consultingEndTime) -
+        this.parseTime(schedule.consultingStartTime);
+      const newMinutes =
+        this.parseTime(schedule.consultingEndTime) - this.parseTime(newStartTime);
+
+      const capacityRatio = newMinutes / originalMinutes;
+      const newTotalCapacity = Math.floor(schedule.totalCapacity * capacityRatio);
+
+      // 3. Check for existing override
+      await this.checkExistingOverride(manager, doctorId, date);
+
+      // 4. Create session override
+      const override = manager.create(SessionOverride, {
+        doctorId,
+        overrideDate: new Date(date),
+        originalStartTime: schedule.consultingStartTime,
+        originalEndTime: schedule.consultingEndTime,
+        newStartTime,
+        newEndTime: schedule.consultingEndTime,
+        originalTotalCapacity: schedule.totalCapacity,
+        newTotalCapacity,
+        reason,
+        isActive: true,
+      });
+
+      await manager.save(SessionOverride, override);
+
+      return {
+        success: true,
+        message: 'Session expanded successfully',
+        override: this.mapToResponseDto(override),
+        oldCapacity: schedule.totalCapacity,
+        newCapacity: newTotalCapacity,
+        additionalCapacity: newTotalCapacity - schedule.totalCapacity,
+        affectedAppointments: 0,
+      };
+    });
+  }
+
+  // ==================== EXPAND END TIME (STREAM) ====================
+  async expandEndTimeStream(
+    doctorId: string,
+    date: string,
+    newEndTime: string,
+    reason?: string,
+  ): Promise<ExpandSessionResultDto> {
+    return await this.dataSource.transaction(async (manager) => {
+      // 1. Get doctor schedule
+      const schedule = await this.getDoctorSchedule(manager, doctorId);
+
+      if (schedule.scheduleType !== ScheduleType.STREAM) {
+        throw new BadRequestException(
+          'This operation is only for stream scheduling',
+        );
+      }
+
+      // 2. Calculate new capacity
+      const originalMinutes =
+        this.parseTime(schedule.consultingEndTime) -
+        this.parseTime(schedule.consultingStartTime);
+      const newMinutes =
+        this.parseTime(newEndTime) - this.parseTime(schedule.consultingStartTime);
+
+      const capacityRatio = newMinutes / originalMinutes;
+      const newTotalCapacity = Math.floor(schedule.totalCapacity * capacityRatio);
+
+      // 3. Check for existing override
+      await this.checkExistingOverride(manager, doctorId, date);
+
+      // 4. Create session override
+      const override = manager.create(SessionOverride, {
+        doctorId,
+        overrideDate: new Date(date),
+        originalStartTime: schedule.consultingStartTime,
+        originalEndTime: schedule.consultingEndTime,
+        newStartTime: schedule.consultingStartTime,
+        newEndTime,
+        originalTotalCapacity: schedule.totalCapacity,
+        newTotalCapacity,
+        reason,
+        isActive: true,
+      });
+
+      await manager.save(SessionOverride, override);
+
+      return {
+        success: true,
+        message: 'Session expanded successfully',
+        override: this.mapToResponseDto(override),
+        oldCapacity: schedule.totalCapacity,
+        newCapacity: newTotalCapacity,
+        additionalCapacity: newTotalCapacity - schedule.totalCapacity,
+        affectedAppointments: 0,
+      };
+    });
+  }
+
   // ==================== HELPER METHODS ====================
 
   private async getDoctorSchedule(
