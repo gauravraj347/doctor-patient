@@ -6,6 +6,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { SessionOverride } from '../entities/SessionOverride';
+import { AppointmentAdjustmentLog } from '../entities/AppointmentAdjustmentLog';
 import { Doctor } from '../entities/Doctor';
 import { DoctorSchedule, ScheduleType } from '../entities/DoctorSchedule';
 import { TimeSlot, Weekday } from '../entities/TimeSlot';
@@ -20,6 +21,8 @@ export class ElasticSchedulingService {
   constructor(
     @InjectRepository(SessionOverride)
     private sessionOverrideRepository: Repository<SessionOverride>,
+    @InjectRepository(AppointmentAdjustmentLog)
+    private appointmentAdjustmentLogRepository: Repository<AppointmentAdjustmentLog>,
     @InjectRepository(Doctor)
     private doctorRepository: Repository<Doctor>,
     @InjectRepository(DoctorSchedule)
@@ -309,6 +312,323 @@ export class ElasticSchedulingService {
         affectedAppointments: 0,
       };
     });
+  }
+
+  // ==================== SHRINK START TIME (WAVE) ====================
+  async shrinkStartTimeWave(
+    doctorId: string,
+    date: string,
+    newStartTime: string,
+    strategy: string = 'AUTO',
+    reason?: string,
+  ): Promise<any> {
+    return await this.dataSource.transaction(async (manager) => {
+      // 1. Get doctor schedule and existing appointments
+      const schedule = await this.getDoctorSchedule(manager, doctorId);
+
+      if (schedule.scheduleType !== ScheduleType.WAVE) {
+        throw new BadRequestException(
+          'This operation is only for wave scheduling',
+        );
+      }
+
+      const appointments = await this.getAppointmentsForDate(
+        manager,
+        doctorId,
+        date,
+      );
+
+      // 2. Identify affected appointments (those before newStartTime)
+      const affectedAppointments = appointments.filter((apt) => {
+        const reportingTime = this.parseTime(apt.reportingTime);
+        const newStart = this.parseTime(newStartTime);
+        return reportingTime < newStart;
+      });
+
+      if (affectedAppointments.length === 0) {
+        throw new BadRequestException('No appointments affected by this change');
+      }
+
+      // 3. Get available slots in new time range
+      const availableSlots = await this.getAvailableSlotsInRange(
+        manager,
+        doctorId,
+        date,
+        newStartTime,
+        schedule.consultingEndTime,
+      );
+
+      // 4. Attempt redistribution based on strategy
+      const redistributionResult = await this.attemptAutoRedistribution(
+        manager,
+        affectedAppointments,
+        availableSlots,
+        schedule,
+        appointments,
+      );
+
+      // 5. Create session override
+      const override = manager.create(SessionOverride, {
+        doctorId,
+        overrideDate: new Date(date),
+        originalStartTime: schedule.consultingStartTime,
+        originalEndTime: schedule.consultingEndTime,
+        newStartTime,
+        newEndTime: schedule.consultingEndTime,
+        originalSlotDuration: schedule.slotDuration,
+        newSlotDuration:
+          redistributionResult.newSlotDuration || schedule.slotDuration,
+        originalCapacityPerSlot: schedule.capacityPerSlot,
+        newCapacityPerSlot:
+          redistributionResult.newCapacityPerSlot || schedule.capacityPerSlot,
+        reason,
+        isActive: true,
+      });
+
+      await manager.save(SessionOverride, override);
+
+      // 6. Apply appointment changes
+      await this.applyAppointmentChanges(
+        manager,
+        redistributionResult.changes,
+        override.id,
+      );
+
+      // 7. Notify affected patients (placeholder for now)
+      await this.notifyAffectedPatients(redistributionResult.changes);
+
+      return {
+        success: true,
+        message: 'Session shrunk successfully',
+        override: this.mapToResponseDto(override),
+        totalAffected: affectedAppointments.length,
+        redistributed: redistributionResult.redistributed,
+        needsReschedule: redistributionResult.remaining.length,
+        strategyUsed: redistributionResult.strategyUsed,
+        changes: redistributionResult.changes,
+      };
+    });
+  }
+  
+  // ==================== REDISTRIBUTION STRATEGIES ====================
+
+  private async attemptAutoRedistribution(
+    manager: any,
+    affectedAppointments: any[],
+    availableSlots: any[],
+    schedule: any,
+    allAppointments: any[],
+  ): Promise<any> {
+    // STRATEGY 1: Move to Adjacent Slots
+    let result = await this.tryMoveToAdjacentSlots(
+      manager,
+      affectedAppointments,
+      availableSlots,
+      schedule,
+    );
+
+    if (result.allFitted) {
+      return {
+        ...result,
+        strategyUsed: 'MOVE_TO_ADJACENT_SLOT',
+      };
+    }
+
+    // Reduce Consultation Time
+    // Increase Capacity Per Slot
+    // Mark Remaining as Needs Reschedule
+    const finalChanges = [
+      ...result.changes,
+      ...result.remaining.map((apt) => ({
+        appointmentId: apt.id,
+        action: 'NEEDS_RESCHEDULE' as const,
+        oldReportingTime: apt.reportingTime,
+        newReportingTime: null,
+        oldSlotId: apt.slotId,
+        newSlotId: null,
+        reason: 'Unable to fit in adjusted session time',
+      })),
+    ];
+
+    return {
+      allFitted: false,
+      redistributed: result.redistributed,
+      remaining: result.remaining,
+      changes: finalChanges,
+      strategyUsed: 'PARTIAL_WITH_RESCHEDULE',
+    };
+  }
+
+  private async tryMoveToAdjacentSlots(
+    manager: any,
+    affectedAppointments: any[],
+    availableSlots: any[],
+    schedule: any,
+  ): Promise<any> {
+    const changes: any[] = [];
+    const remaining: any[] = [];
+
+    // Sort appointments by original time
+    const sortedAppointments = affectedAppointments.sort(
+      (a, b) => this.parseTime(a.reportingTime) - this.parseTime(b.reportingTime),
+    );
+
+    // Calculate current capacity for each slot
+    const slotCapacity = new Map<string, number>();
+    for (const slot of availableSlots) {
+      const currentCount = await this.getSlotBookingCount(manager, slot.id);
+      slotCapacity.set(slot.id, schedule.capacityPerSlot - currentCount);
+    }
+
+    // Try to fit each appointment
+    for (const appointment of sortedAppointments) {
+      let fitted = false;
+
+      // Try each available slot in order
+      for (const slot of availableSlots) {
+        const availableCapacity = slotCapacity.get(slot.id) || 0;
+
+        if (availableCapacity > 0) {
+          // Move appointment to this slot
+          changes.push({
+            appointmentId: appointment.id,
+            action: 'MOVED',
+            oldReportingTime: appointment.reportingTime,
+            newReportingTime: slot.startTime,
+            oldSlotId: appointment.slotId,
+            newSlotId: slot.id,
+            reason: 'Moved due to session shrink',
+          });
+
+          // Update capacity
+          slotCapacity.set(slot.id, availableCapacity - 1);
+          fitted = true;
+          break;
+        }
+      }
+
+      if (!fitted) {
+        remaining.push(appointment);
+      }
+    }
+
+    return {
+      allFitted: remaining.length === 0,
+      redistributed: changes.length,
+      remaining,
+      changes,
+    };
+  }
+
+  private async getAppointmentsForDate(
+    manager: any,
+    doctorId: string,
+    date: string,
+  ): Promise<any[]> {
+    return await manager.find(Appointment, {
+      where: {
+        appointmentDate: new Date(date),
+        status: 'Scheduled',
+      },
+      relations: ['timeSlot', 'patient'],
+    });
+  }
+
+  private async getAvailableSlotsInRange(
+    manager: any,
+    doctorId: string,
+    date: string,
+    startTime: string,
+    endTime: string,
+  ): Promise<any[]> {
+    const dayOfWeek = this.getDayOfWeek(new Date(date));
+
+    return await manager
+      .createQueryBuilder(TimeSlot, 'slot')
+      .where('slot.doctorId = :doctorId', { doctorId })
+      .andWhere('slot.weekday = :weekday', { weekday: dayOfWeek })
+      .andWhere('slot.startTime >= :startTime', { startTime })
+      .andWhere('slot.startTime < :endTime', { endTime })
+      .andWhere('slot.isAvailable = :isAvailable', { isAvailable: true })
+      .orderBy('slot.startTime', 'ASC')
+      .getMany();
+  }
+
+  private async getSlotBookingCount(
+    manager: any,
+    slotId: string,
+  ): Promise<number> {
+    return await manager.count(Appointment, {
+      where: {
+        slotId,
+        status: 'Scheduled',
+      },
+    });
+  }
+
+  private async applyAppointmentChanges(
+    manager: any,
+    changes: any[],
+    overrideId: string,
+  ): Promise<void> {
+    for (const change of changes) {
+      const appointment = await manager.findOne(Appointment, {
+        where: { id: change.appointmentId },
+      });
+
+      if (!appointment) continue;
+
+      // Store original values if not already stored
+      if (!appointment.originalReportingTime) {
+        appointment.originalReportingTime = appointment.reportingTime;
+      }
+      if (!appointment.originalSlotId) {
+        appointment.originalSlotId = appointment.slotId;
+      }
+
+      // Update appointment
+      if (change.action === 'MOVED' || change.action === 'REDISTRIBUTED') {
+        appointment.reportingTime = change.newReportingTime;
+        appointment.slotId = change.newSlotId;
+        appointment.wasAffectedByElasticScheduling = true;
+        appointment.elasticSchedulingNote = change.reason;
+      } else if (change.action === 'NEEDS_RESCHEDULE') {
+        appointment.status = 'NeedsReschedule' as any;
+        appointment.wasAffectedByElasticScheduling = true;
+        appointment.elasticSchedulingNote = change.reason;
+      }
+
+      await manager.save(Appointment, appointment);
+
+      // Create adjustment log
+      const log = manager.create(AppointmentAdjustmentLog, {
+        appointmentId: change.appointmentId,
+        sessionOverrideId: overrideId,
+        adjustmentType: change.action,
+        oldReportingTime: change.oldReportingTime,
+        newReportingTime: change.newReportingTime,
+        oldSlotId: change.oldSlotId,
+        newSlotId: change.newSlotId,
+        notes: change.reason,
+        patientNotified: false,
+      });
+
+      await manager.save(AppointmentAdjustmentLog, log);
+    }
+  }
+
+  private async notifyAffectedPatients(changes: any[]): Promise<void> {
+    // TODO: Implement actual notification service
+    for (const change of changes) {
+      console.log('='.repeat(60));
+      console.log('[ELASTIC SCHEDULING NOTIFICATION]');
+      console.log(`Appointment ID: ${change.appointmentId}`);
+      console.log(`Action: ${change.action}`);
+      console.log(`Old Time: ${change.oldReportingTime}`);
+      console.log(`New Time: ${change.newReportingTime || 'NEEDS RESCHEDULE'}`);
+      console.log(`Reason: ${change.reason}`);
+      console.log('='.repeat(60));
+    }
   }
 
   // ==================== HELPER METHODS ====================

@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { ElasticSchedulingService } from './elastic-scheduling.service';
 import { ExpandSessionDto } from './dto/expand-session.dto';
+import { ShrinkSessionDto } from './dto/shrink-session.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @Controller('doctors/:doctorId/sessions/:date')
@@ -89,6 +90,31 @@ export class ElasticSchedulingController {
       throw error;
     }
   }
+
+  @Post('shrink-start')
+  async shrinkStartTime(
+    @Param('doctorId') doctorId: string,
+    @Param('date') date: string,
+    @Body() dto: ShrinkSessionDto,
+  ) {
+    // Validate that newStartTime is provided
+    if (!dto.newStartTime) {
+      throw new BadRequestException('newStartTime is required');
+    }
+
+    // Validate date format
+    this.validateDate(date);
+
+    // Phase 2: Only Wave scheduling is supported for shrink
+    return await this.elasticSchedulingService.shrinkStartTimeWave(
+      doctorId,
+      date,
+      dto.newStartTime,
+      dto.strategy || 'AUTO',
+      dto.reason,
+    );
+  }
+
 
   private validateDate(dateString: string): void {
     const date = new Date(dateString);
